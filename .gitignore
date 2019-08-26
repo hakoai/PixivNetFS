@@ -77,3 +77,6 @@ release/package-lock\.json
 /release-exp/
 
 .vscode
+
+bin/
+obj/

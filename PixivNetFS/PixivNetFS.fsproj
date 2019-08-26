@@ -4,6 +4,8 @@
     <OutputType>Library</OutputType>
     <TargetFramework>netstandard2.0</TargetFramework>
     <DebugType>portable</DebugType>
+    <Version>0.0.1</Version>
+    <Authors>hakoai</Authors>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="PixivNetFS.fs" />
