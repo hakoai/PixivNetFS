@@ -63,32 +63,38 @@ module PixivBase =
         [ "accept", "'application/json, text/plain, */*'"
           "user-agent", "axios/0.19.0" ]
 
-    let loginPassword requestPost username password : Async<LoginRes> =
+    type GetFunction = string * (string * string) list * (string * string) list -> Async<string>
+
+    type PostFunction = string * (string * string) list * (string * string) list -> Async<string>
+
+    type RequestFunctions = GetFunction * PostFunction
+
+    let loginPassword (requestPost : PostFunction) username password : Async<LoginRes> =
         async {
             let! res = requestPost ("https://oauth.secure.pixiv.net/auth/token",
                                     baseHeader,
-                                    FormValues [ "client_id", ClientId
-                                                 "client_secret", ClientSecret
-                                                 "get_secure_url", "1"
-                                                 "grant_type", "password"
-                                                 "username", username
-                                                 "password", password ])
+                                    [ "client_id", ClientId
+                                      "client_secret", ClientSecret
+                                      "get_secure_url", "1"
+                                      "grant_type", "password"
+                                      "username", username
+                                      "password", password ])
             return LoginResProvider.Parse(res)
         }
 
-    let loginRefreshToken requestPost (RefreshToken token) : Async<LoginRes> =
+    let loginRefreshToken (requestPost : PostFunction) (RefreshToken token) : Async<LoginRes> =
         async {
             let! res = requestPost ("https://oauth.secure.pixiv.net/auth/token",
                                     baseHeader,
-                                    FormValues [ "client_id", ClientId
-                                                 "client_secret", ClientSecret
-                                                 "get_secure_url", "1"
-                                                 "grant_type", "refresh_token"
-                                                 "refresh_token ", token ])
+                                    [ "client_id", ClientId
+                                      "client_secret", ClientSecret
+                                      "get_secure_url", "1"
+                                      "grant_type", "refresh_token"
+                                      "refresh_token ", token ])
             return LoginResProvider.Parse(res)
         }
 
-    let requestGet requestGet atoken url param =
+    let requestGet (requestGet : GetFunction) atoken url param =
         let request url param (AccessToken accesstoken) =
             let header =
                 List.concat
@@ -104,7 +110,7 @@ module PixivBase =
         async { let! res = request url param atoken
                 return res }
 
-    let requestPost requestPost atoken url param =
+    let requestPost (requestPost : PostFunction) atoken url param =
         let request url param (AccessToken accesstoken) =
             let header =
                 List.concat
@@ -116,7 +122,7 @@ module PixivBase =
 
                         Authorization
                         <| System.String.Format("Bearer {0}", accesstoken) ] ]
-            requestPost (url, header, FormValues param)
+            requestPost (url, header, param)
         async { let! res = request url param atoken
                 return res }
 
@@ -134,14 +140,13 @@ module PixivBase =
     let inline getNextIllusts request token (NextUrl nexturl) =
         requestIllusts request token <| RequestParam(nexturl, [])
 
-    type RequestFunctions = (string * (string * string) list * (string * string) list -> Async<string>) * (string * (string * string) list * HttpRequestBody -> Async<string>)
-
-    let httpRequest =
+    let httpRequest : RequestFunctions =
         let getFunc (url, header, param) =
             Http.AsyncRequestString
                 (url, headers = header, query = param, httpMethod = "Get")
         let postFunc (url, header, param) =
-            Http.AsyncRequestString(url, headers = header, body = param)
+            Http.AsyncRequestString
+                (url, headers = header, body = FormValues param)
         (getFunc, postFunc)
 
 module PixivF =
@@ -150,7 +155,8 @@ module PixivF =
     open FSharpPlus.Data
     open FSharp.Control
 
-    let inline mkLoginFunction login ((_, reqs)) param = login reqs param
+    let inline mkLoginFunction login ((_, reqs) : PixivBase.RequestFunctions)
+               param = login reqs param
 
     let inline loginPassword' reqs id password =
         let inline f r (i, p) = PixivBase.loginPassword r i p
@@ -161,12 +167,13 @@ module PixivF =
     let loginPassword = loginPassword' PixivBase.httpRequest
     let loginToken = loginToken' PixivBase.httpRequest
 
-    let getIllustImpl reqestFunc ((requestGet, _) as request) (atoken, rtoken)
-        param =
+    let getIllustImpl reqestFunc
+        ((requestGet, _) as request : PixivBase.RequestFunctions)
+        ((atoken, rtoken) as tokens) param =
         async {
             try
                 let! res = reqestFunc requestGet atoken param
-                return res, (atoken, rtoken)
+                return res, tokens
             with _ ->
                 let! res = loginToken' request rtoken
                 let atoken = getAccessToken res
