@@ -2,6 +2,33 @@ namespace PixivNetFS
 
 module JsonData =
     [<Literal>]
+    let LoginRes = """
+{
+  "response": {
+    "access_token": "token",
+    "expires_in": 3600,
+    "token_type": "bearer",
+    "scope": "",
+    "refresh_token": "token",
+    "user": {
+      "profile_image_urls": {
+        "px_16x16": "https:\/\/s.pximg.net\/common\/images\/no_profile_ss.png",
+        "px_50x50": "https:\/\/s.pximg.net\/common\/images\/no_profile_s.png",
+        "px_170x170": "https:\/\/s.pximg.net\/common\/images\/no_profile.png"
+      },
+      "id": "12234",
+      "name": "user",
+      "account": "ac",
+      "mail_address": "user@gmail.com",
+      "is_premium": false,
+      "x_restrict": 1,
+      "is_mail_authorized": true
+    },
+    "device_token": "token"
+  }
+}
+    """
+    [<Literal>]
     let Illust = """
 [
   {

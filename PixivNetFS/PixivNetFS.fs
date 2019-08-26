@@ -4,35 +4,7 @@ namespace PixivNetFS
 module PixivType =
     open FSharp.Data
 
-    [<Literal>]
-    let LoginResSample = """
-{
-  "response": {
-    "access_token": "token",
-    "expires_in": 3600,
-    "token_type": "bearer",
-    "scope": "",
-    "refresh_token": "token",
-    "user": {
-      "profile_image_urls": {
-        "px_16x16": "https:\/\/s.pximg.net\/common\/images\/no_profile_ss.png",
-        "px_50x50": "https:\/\/s.pximg.net\/common\/images\/no_profile_s.png",
-        "px_170x170": "https:\/\/s.pximg.net\/common\/images\/no_profile.png"
-      },
-      "id": "12234",
-      "name": "user",
-      "account": "ac",
-      "mail_address": "user@gmail.com",
-      "is_premium": false,
-      "x_restrict": 1,
-      "is_mail_authorized": true
-    },
-    "device_token": "token"
-  }
-}
-    """
-
-    type LoginResProvider = JsonProvider<LoginResSample>
+    type LoginResProvider = JsonProvider<JsonData.LoginRes>
 
     type LoginRes = LoginResProvider.Root
 
@@ -55,6 +27,8 @@ module PixivType =
 
     type NextUrl = NextUrl of string
 
+    type RequestParam = RequestParam of string * (string * string) list
+
     type Restrict =
         | Public
         | Private
@@ -64,14 +38,16 @@ module PixivType =
         | Public -> "restrict", "public"
         | Private -> "restrict", "private"
 
-    let host = "https://app-api.pixiv.net"
-    let mkIllustFollowParam restrict =
-        host + "/v2/illust/follow", [ mkRestrictStr restrict ]
+    [<Literal>]
+    let Host = "https://app-api.pixiv.net"
 
-    let mkUserBookmarksIllustParam userid restrict =
-        host + "/v1/user/bookmarks/illust",
-        [ "user_id", userid
-          mkRestrictStr restrict ]
+    let inline mkIllustFollowParam restrict =
+        RequestParam(Host + "/v2/illust/follow", [ mkRestrictStr restrict ])
+
+    let inline mkUserBookmarksIllustParam userid restrict =
+        RequestParam(Host + "/v1/user/bookmarks/illust",
+                     [ "user_id", userid
+                       mkRestrictStr restrict ])
 
 module PixivBase =
     open FSharp.Data
@@ -112,7 +88,7 @@ module PixivBase =
             return LoginResProvider.Parse(res)
         }
 
-    let requestGet requestGet atoken (url : string) param =
+    let requestGet requestGet atoken url param =
         let request url param (AccessToken accesstoken) =
             let header =
                 List.concat
@@ -144,9 +120,9 @@ module PixivBase =
         async { let! res = request url param atoken
                 return res }
 
-    let getNextUrl (res : IllustRes) = Option.map NextUrl res.NextUrl
+    let inline getNextUrl (res : IllustRes) = Option.map NextUrl res.NextUrl
 
-    let requestIllusts request token (url, param) : Async<Illusts * NextUrl option> =
+    let requestIllusts request token (RequestParam(url, param)) : Async<Illusts * NextUrl option> =
         let filter = "filter", "for_ios"
         let withFilter param = filter :: param
         async {
@@ -155,8 +131,8 @@ module PixivBase =
             return parsed.Illusts, getNextUrl parsed
         }
 
-    let getNextIllusts request token (NextUrl nexturl) =
-        requestIllusts request token (nexturl, [])
+    let inline getNextIllusts request token (NextUrl nexturl) =
+        requestIllusts request token <| RequestParam(nexturl, [])
 
     type RequestFunctions = (string * (string * string) list * (string * string) list -> Async<string>) * (string * (string * string) list * HttpRequestBody -> Async<string>)
 
@@ -174,42 +150,38 @@ module PixivF =
     open FSharpPlus.Data
     open FSharp.Control
 
-    let getIllustSeq ((requestGet, _) as request) token cb param =
-        let getIllustSeqNext ((reqs, _)) token cb next =
-            let getIllustFunc = PixivBase.getNextIllusts reqs token
-            AsyncSeq.unfoldAsync (function
-                | Some next ->
-                    async {
-                        let! res, n = getIllustFunc next
-                        do! cb res
-                        return Some(res, n)
-                    }
-                | None -> async { return None }) next
-        async {
-            return asyncSeq {
-                       let! res, next = PixivBase.requestIllusts requestGet token
-                                            param
-                       yield res
-                       yield! getIllustSeqNext request token cb next
-                   }
-                   |> AsyncSeq.concatSeq
-                   |> AsyncSeq.toBlockingSeq
-        }
+    let inline mkLoginFunction login ((_, reqs)) param = login reqs param
 
-    type PixivM<'T> = ReaderT<AccessToken, Async<'T>>
-
-    let requsetIllustM' reqs cb param : PixivM<seq<Illust>> =
-        ReaderT <| fun t -> getIllustSeq reqs t cb param
-    
-    let mkLoginFunction login ((_, reqs)) param = login reqs param
-
-    let loginPassword' reqs id password =
-        let f r (i, p) = PixivBase.loginPassword r i p
+    let inline loginPassword' reqs id password =
+        let inline f r (i, p) = PixivBase.loginPassword r i p
         mkLoginFunction f reqs (id, password)
 
-    let loginToken' reqs token =
+    let inline loginToken' reqs token =
         mkLoginFunction PixivBase.loginRefreshToken reqs token
-    let requsetIllustM = requsetIllustM' PixivBase.httpRequest
     let loginPassword = loginPassword' PixivBase.httpRequest
     let loginToken = loginToken' PixivBase.httpRequest
 
+    let getIllustImpl reqestFunc ((requestGet, _) as request) (atoken, rtoken)
+        param =
+        async {
+            try
+                let! res = reqestFunc requestGet atoken param
+                return res, (atoken, rtoken)
+            with _ ->
+                let! res = loginToken' request rtoken
+                let atoken = getAccessToken res
+                let rtoken = getRefreshToken res
+                let! res = reqestFunc requestGet atoken param
+                return (res, (atoken, rtoken))
+        }
+
+    let getIllustFirst' = getIllustImpl PixivBase.requestIllusts
+    let getIllustNext' = getIllustImpl PixivBase.getNextIllusts
+    let inline getIllustFirstM' request param =
+        StateT <| fun t -> getIllustFirst' request t param
+    let inline getIllustNextM' request param =
+        StateT <| fun t -> getIllustNext' request t param
+    let getIllustFirst = getIllustFirst' PixivBase.httpRequest
+    let getIllustNext = getIllustNext' PixivBase.httpRequest
+    let getIllustFirstM = getIllustFirstM' PixivBase.httpRequest
+    let getIllustNextM = getIllustNextM' PixivBase.httpRequest
