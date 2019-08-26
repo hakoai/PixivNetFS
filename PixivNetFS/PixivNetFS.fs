@@ -45,7 +45,7 @@ module PixivType =
     let getRefreshToken (res : LoginRes) =
         RefreshToken res.Response.RefreshToken
 
-    type IllustResProvider = JsonProvider<"illust.json", SampleIsList=true>
+    type IllustResProvider = JsonProvider<JsonData.Illust, SampleIsList=true>
 
     type IllustRes = IllustResProvider.Root
 
